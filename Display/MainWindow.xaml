@@ -12,6 +12,7 @@
                 <ColumnDefinition Width="800"/>
             </Grid.ColumnDefinitions>
             <Grid Grid.Column="0">
+                <Image Name="reconstructionImage"/>
                 <Viewport3D Name="ReconstructionViewport"></Viewport3D>
             </Grid>
             <Grid Grid.Column="1">
