@@ -22,9 +22,6 @@ using System.Windows.Threading;
 using Wpf3DTools;
 
 namespace Display {
-    /// <summary>
-    /// Interaction logic for MainWindow.xaml
-    /// </summary>
     public partial class MainWindow : Window {
         public MainWindow() {
             InitializeComponent();
@@ -102,13 +99,8 @@ namespace Display {
         private static System.Windows.Media.Color volumeCubeLineColor = System.Windows.Media.Color.FromArgb(200, 0, 200, 0);
         private bool autoResetReconstructionOnTimeSkip = false;
         private bool disposed;
-        private bool savingMesh;
-        private bool displayNormals;
-        private bool captureColor;
         private bool pauseIntegration;
-        private bool mirrorDepth;
         private bool kinectView = true;
-        private bool volumeGraphics;
         private int depthWidth = 0;
         private int depthHeight = 0;
         private int depthPixelCount = 0;
@@ -155,7 +147,6 @@ namespace Display {
         private FusionPointCloudImageFrame downsampledDepthPointCloudFrame;
         private FusionColorImageFrame downsampledDeltaFromReferenceFrameColorFrame;
         private WriteableBitmap depthFloatFrameBitmap;
-        private WriteableBitmap deltaFromReferenceFrameBitmap;
         private WriteableBitmap shadedSurfaceFrameBitmap;
         private float[] depthFloatFrameDepthPixels;
         private float[] deltaFromReferenceFrameFloatPixels;
@@ -177,12 +168,7 @@ namespace Display {
         private ScreenSpaceLines3D volumeCubeAxisX;
         private ScreenSpaceLines3D volumeCubeAxisY;
         private ScreenSpaceLines3D volumeCubeAxisZ;
-        private ScreenSpaceLines3D axisX;
-        private ScreenSpaceLines3D axisY;
-        private ScreenSpaceLines3D axisZ;
         private bool haveAddedVolumeCube = false;
-        private bool haveAddedCoordinateCross = false;
-        private bool viewChanged = true;
         private GraphicsCamera virtualCamera;
         private Quaternion virtualCameraStartRotation = Quaternion.Identity;
         private Point3D virtualCameraStartTranslation = new Point3D();
@@ -200,14 +186,11 @@ namespace Display {
         private bool translateResetPoseByMinDepthThreshold = true;
         private Matrix4 worldToBGRTransform = new Matrix4();
         private Matrix4 virtualCameraWorldToCameraMatrix4 = new Matrix4();
-        private bool colorCaptured;
         private CameraPoseFinder cameraPoseFinder;
         private bool autoFindCameraPoseWhenLost = true;
 
 
         private void onClose(object sender, System.ComponentModel.CancelEventArgs e) {
-            this.Dispose();
-            // Stop timer
             if (null != this.fpsTimer) {
                 this.fpsTimer.Stop();
                 this.fpsTimer.Tick -= this.FpsTimerTick;
@@ -228,6 +211,8 @@ namespace Display {
             }
             this.virtualCamera.DisposeFrustum3DGraphics();
             this.StopWorkerThread();
+            this.Dispose(true);
+            GC.SuppressFinalize(this);
         }
 
 
@@ -246,27 +231,6 @@ namespace Display {
                 }
             }
         }
-        public bool MirrorDepth {
-            get {
-                return this.mirrorDepth;
-            }
-
-            set {
-                this.mirrorDepth = value;
-                if (null != this.PropertyChanged) {
-                    this.PropertyChanged.Invoke(this, new PropertyChangedEventArgs("MirrorDepth"));
-                }
-
-                this.resetReconstruction = true;
-            }
-        }
-        public bool KinectView {
-            get {
-                return this.kinectView;
-            }
-
-            set {}
-        }
         public bool IsRenderOverdue {
             get {
                 return (DateTime.UtcNow - this.lastRenderTimestamp).TotalMilliseconds >= RenderIntervalMilliseconds;
@@ -275,10 +239,6 @@ namespace Display {
 
         #endregion
 
-        public void Dispose() {
-            this.Dispose(true);
-            GC.SuppressFinalize(this);
-        }
 
         protected virtual void Dispose(bool disposing) {
             if (!this.disposed) {
@@ -286,32 +246,24 @@ namespace Display {
                     if (null != this.depthReadyEvent) {
                         this.depthReadyEvent.Dispose();
                     }
-
                     if (null != this.colorReadyEvent) {
                         this.colorReadyEvent.Dispose();
                     }
-
                     if (null != this.workerThreadStopEvent) {
                         this.workerThreadStopEvent.Dispose();
                     }
-
                     this.RemoveVolumeCube3DGraphics();
                     this.DisposeVolumeCube3DGraphics();
-
-
                     if (null != this.virtualCamera) {
                         this.virtualCamera.CameraTransformationChanged -= this.OnVirtualCameraTransformationChanged;
                         this.virtualCamera.Dispose();
                     }
-
                     this.SafeDisposeFusionResources();
-
                     if (null != this.volume) {
                         this.volume.Dispose();
                     }
                 }
             }
-
             this.disposed = true;
         }
 
@@ -342,16 +294,6 @@ namespace Display {
             this.lastFPSTimestamp = DateTime.UtcNow;
         }
 
-        private void ResetFps() {
-            if (null != this.fpsTimer) {
-                this.fpsTimer.Stop();
-                this.fpsTimer.Start();
-            }
-            this.processedFrameCount = 0;
-            this.lastFPSTimestamp = DateTime.UtcNow;
-        }
-
-
         private void StartWorkerThread() {
             if (null == this.workerThread) {
                 this.depthReadyEvent = new ManualResetEvent(false);
@@ -361,7 +303,6 @@ namespace Display {
                 this.workerThread.Start();
             }
         }
-
 
         private void StopWorkerThread() {
             if (null != this.workerThread) {
@@ -426,7 +367,7 @@ namespace Display {
                     }
                 }
             }
-            catch (Exception) {}
+            catch (Exception) { }
             finally {
                 if (depthFrame != null) {
                     depthFrame.Dispose();
@@ -465,9 +406,11 @@ namespace Display {
                 this.ResetReconstruction();
             }
 
-            if (null != this.volume && !this.savingMesh) {
+            if (null != this.volume) {
                 try {
-                    this.cameraPoseFinderAvailable = this.IsCameraPoseFinderAvailable();
+                    this.cameraPoseFinderAvailable = this.autoFindCameraPoseWhenLost
+                            && null != this.cameraPoseFinder
+                            && this.cameraPoseFinder.GetStoredPoseCount() > 0;
                     this.ProcessDepthData();
                     this.TrackCamera();
                     if (0 == this.trackingErrorCount) {
@@ -489,11 +432,6 @@ namespace Display {
             }
         }
 
-        private bool IsCameraPoseFinderAvailable() {
-            return this.autoFindCameraPoseWhenLost
-                && null != this.cameraPoseFinder
-                && this.cameraPoseFinder.GetStoredPoseCount() > 0;
-        }
 
         private void ProcessDepthData() {
             if (this.autoResetReconstructionOnTimeSkip) {
@@ -506,7 +444,7 @@ namespace Display {
                     this.depthFloatFrame,
                     this.minDepthClip,
                     this.maxDepthClip,
-                    this.MirrorDepth);
+                    false);
             }
             this.Dispatcher.BeginInvoke(
                 (Action)
@@ -625,7 +563,7 @@ namespace Display {
 
             if (trackingSucceeded) {
                 if (this.kinectView) {
-                    Dispatcher.BeginInvoke((Action)(() => this.UpdateVirtualCameraTransform()));
+                    Dispatcher.BeginInvoke((Action)(() => this.virtualCamera.WorldToCameraMatrix4 = this.worldToCameraTransform));
                 }
                 else {
                     Dispatcher.BeginInvoke((Action)(() => this.virtualCamera.UpdateFrustumTransformMatrix4(this.worldToCameraTransform)));
@@ -759,98 +697,6 @@ namespace Display {
             }
         }
 
-        
-        private unsafe void MapColorToDepth() {
-            this.mapper.MapDepthFrameToColorSpace(this.depthImagePixels, this.colorCoordinates);
-            lock (this.rawDataLock) {
-                Array.Clear(this.depthVisibilityTestMap, 0, this.depthVisibilityTestMap.Length);
-                fixed (ushort* ptrDepthVisibilityPixels = this.depthVisibilityTestMap, ptrDepthPixels = this.depthImagePixels) {
-                    for (int index = 0; index < this.depthImagePixels.Length; ++index) {
-                        if (!float.IsInfinity(this.colorCoordinates[index].X) && !float.IsInfinity(this.colorCoordinates[index].Y)) {
-                            int x = (int)(Math.Floor(this.colorCoordinates[index].X + 0.5f) / ColorDownsampleFactor);
-                            int y = (int)(Math.Floor(this.colorCoordinates[index].Y + 0.5f) / ColorDownsampleFactor);
-                            if ((x >= 0) && (x < this.depthVisibilityTestMapWidth) &&
-                                (y >= 0) && (y < this.depthVisibilityTestMapHeight)) {
-                                int depthVisibilityTestIndex = (y * this.depthVisibilityTestMapWidth) + x;
-                                if ((ptrDepthVisibilityPixels[depthVisibilityTestIndex] == 0) ||
-                                    (ptrDepthVisibilityPixels[depthVisibilityTestIndex] > ptrDepthPixels[index])) {
-                                    ptrDepthVisibilityPixels[depthVisibilityTestIndex] = ptrDepthPixels[index];
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (this.mirrorDepth) {
-                    fixed (byte* ptrColorPixels = this.colorImagePixels) {
-                        int* rawColorPixels = (int*)ptrColorPixels;
-                        Parallel.For(
-                            0,
-                            this.depthHeight,
-                            y => {
-                                int destIndex = y * this.depthWidth;
-
-                                for (int x = 0; x < this.depthWidth; ++x, ++destIndex) {
-                                    int colorInDepthX = (int)Math.Floor(colorCoordinates[destIndex].X + 0.5);
-                                    int colorInDepthY = (int)Math.Floor(colorCoordinates[destIndex].Y + 0.5);
-                                    int depthVisibilityTestX = (int)(colorInDepthX / ColorDownsampleFactor);
-                                    int depthVisibilityTestY = (int)(colorInDepthY / ColorDownsampleFactor);
-                                    int depthVisibilityTestIndex = (depthVisibilityTestY * this.depthVisibilityTestMapWidth) + depthVisibilityTestX;
-                                    if (colorInDepthX >= 0 && colorInDepthX < this.colorWidth && colorInDepthY >= 0
-                                        && colorInDepthY < this.colorHeight && this.depthImagePixels[destIndex] != 0) {
-                                        ushort depthTestValue = this.depthVisibilityTestMap[depthVisibilityTestIndex];
-                                        if ((this.depthImagePixels[destIndex] - depthTestValue) < DepthVisibilityTestThreshold) {
-                                            int sourceColorIndex = colorInDepthX + (colorInDepthY * this.colorWidth);
-                                            this.resampledColorImagePixelsAlignedToDepth[destIndex] = rawColorPixels[sourceColorIndex];
-                                        }
-                                        else {
-                                            this.resampledColorImagePixelsAlignedToDepth[destIndex] = 0;
-                                        }
-                                    }
-                                    else {
-                                        this.resampledColorImagePixelsAlignedToDepth[destIndex] = 0;
-                                    }
-                                }
-                            });
-                    }
-                }
-                else {
-                    fixed (byte* ptrColorPixels = this.colorImagePixels) {
-                        int* rawColorPixels = (int*)ptrColorPixels;
-                        Parallel.For(
-                            0,
-                            this.depthHeight,
-                            y => {
-                                int destIndex = y * this.depthWidth;
-                                int flippedDestIndex = destIndex + (this.depthWidth - 1);
-                                for (int x = 0; x < this.depthWidth; ++x, ++destIndex, --flippedDestIndex) {
-                                    int colorInDepthX = (int)Math.Floor(colorCoordinates[destIndex].X + 0.5);
-                                    int colorInDepthY = (int)Math.Floor(colorCoordinates[destIndex].Y + 0.5);
-                                    int depthVisibilityTestX = (int)(colorInDepthX / ColorDownsampleFactor);
-                                    int depthVisibilityTestY = (int)(colorInDepthY / ColorDownsampleFactor);
-                                    int depthVisibilityTestIndex = (depthVisibilityTestY * this.depthVisibilityTestMapWidth) + depthVisibilityTestX;
-                                    if (colorInDepthX >= 0 && colorInDepthX < this.colorWidth && colorInDepthY >= 0
-                                        && colorInDepthY < this.colorHeight && this.depthImagePixels[destIndex] != 0) {
-                                        ushort depthTestValue = this.depthVisibilityTestMap[depthVisibilityTestIndex];
-                                        if ((this.depthImagePixels[destIndex] - depthTestValue) < DepthVisibilityTestThreshold) {
-                                            int sourceColorIndex = colorInDepthX + (colorInDepthY * this.colorWidth);
-                                            this.resampledColorImagePixelsAlignedToDepth[flippedDestIndex] = rawColorPixels[sourceColorIndex];
-                                        }
-                                        else {
-                                            this.resampledColorImagePixelsAlignedToDepth[flippedDestIndex] = 0;
-                                        }
-                                    }
-                                    else {
-                                        this.resampledColorImagePixelsAlignedToDepth[flippedDestIndex] = 0;
-                                    }
-                                }
-                            });
-                    }
-                }
-            }
-
-            this.resampledColorFrameDepthAligned.CopyPixelDataFrom(this.resampledColorImagePixelsAlignedToDepth);
-        }
 
         private bool IntegrateData() {
             bool colorAvailable = this.colorReadyEvent.WaitOne(0);
@@ -860,22 +706,10 @@ namespace Display {
             if (integrateData) {
                 bool integrateColor = this.processedFrameCount % ColorIntegrationInterval == 0 && colorAvailable;
                 this.trackingHasFailedPreviously = false;
-                if (this.captureColor && integrateColor) {
-                    this.MapColorToDepth();
-                    this.volume.IntegrateFrame(
-                        this.depthFloatFrame,
-                        this.resampledColorFrameDepthAligned,
-                        this.integrationWeight,
-                        FusionDepthProcessor.DefaultColorIntegrationOfAllAngles,
-                        this.worldToCameraTransform);
-                    this.colorCaptured = true;
-                }
-                else {
-                    this.volume.IntegrateFrame(
-                        this.depthFloatFrame,
-                        this.integrationWeight,
-                        this.worldToCameraTransform);
-                }
+                this.volume.IntegrateFrame(
+                    this.depthFloatFrame,
+                    this.integrationWeight,
+                    this.worldToCameraTransform);
                 this.colorReadyEvent.Reset();
             }
 
@@ -883,24 +717,23 @@ namespace Display {
         }
 
         private void RenderReconstruction() {
-            if (null == this.volume || this.savingMesh || null == this.raycastPointCloudFrame
+            if (null == this.volume || null == this.raycastPointCloudFrame
                 || null == this.shadedSurfaceFrame || null == this.shadedSurfaceNormalsFrame) {
                 return;
             }
-            Matrix4 cameraView = this.KinectView ? this.worldToCameraTransform : this.virtualCameraWorldToCameraMatrix4;
-            if (this.captureColor) {
-                this.volume.CalculatePointCloud(this.raycastPointCloudFrame, this.shadedSurfaceFrame, cameraView);
-            }
-            else {
-                this.volume.CalculatePointCloud(this.raycastPointCloudFrame, cameraView);
-                FusionDepthProcessor.ShadePointCloud(
-                    this.raycastPointCloudFrame,
-                    cameraView,
-                    this.worldToBGRTransform,
-                    this.displayNormals ? null : this.shadedSurfaceFrame,
-                    this.displayNormals ? this.shadedSurfaceNormalsFrame : null);
-            }
-            Dispatcher.BeginInvoke((Action)(() => this.ReconstructFrameComplete()));
+            Matrix4 cameraView = this.kinectView ? this.worldToCameraTransform : this.virtualCameraWorldToCameraMatrix4;
+            this.volume.CalculatePointCloud(this.raycastPointCloudFrame, cameraView);
+            FusionDepthProcessor.ShadePointCloud(
+                this.raycastPointCloudFrame,
+                cameraView,
+                this.worldToBGRTransform,
+                this.shadedSurfaceFrame,
+                null);
+            Dispatcher.BeginInvoke((Action)(() => RenderColorImage(
+                            this.shadedSurfaceFrame,
+                            ref this.shadedSurfaceFramePixelsArgb,
+                            ref this.shadedSurfaceFrameBitmap,
+                            this.reconstructionImage)));
             this.lastRenderTimestamp = DateTime.UtcNow;
         }
 
@@ -926,41 +759,6 @@ namespace Display {
             }
         }
 
-
-        private void RenderAlignDeltasFloatImage(FusionFloatImageFrame alignDeltasFloatFrame, ref WriteableBitmap bitmap, System.Windows.Controls.Image image) {
-            if (null == alignDeltasFloatFrame) {
-                return;
-            }
-
-            if (null == bitmap || alignDeltasFloatFrame.Width != bitmap.Width || alignDeltasFloatFrame.Height != bitmap.Height) {
-                bitmap = new WriteableBitmap(alignDeltasFloatFrame.Width, alignDeltasFloatFrame.Height, 96.0, 96.0, PixelFormats.Bgr32, null);
-                image.Source = bitmap;
-            }
-            alignDeltasFloatFrame.CopyPixelDataTo(this.deltaFromReferenceFrameFloatPixels);
-            Parallel.For(
-            0,
-            alignDeltasFloatFrame.Height,
-            y => {
-                int index = y * alignDeltasFloatFrame.Width;
-                for (int x = 0; x < alignDeltasFloatFrame.Width; ++x, ++index) {
-                    float residue = this.deltaFromReferenceFrameFloatPixels[index];
-
-                    if (residue < 1.0f) {
-                        this.deltaFromReferenceFramePixelsArgb[index] = (byte)(255.0f * KinectFusionHelper.ClampFloatingPoint(1.0f - residue, 0.0f, 1.0f)); // blue
-                        this.deltaFromReferenceFramePixelsArgb[index] |= ((byte)(255.0f * KinectFusionHelper.ClampFloatingPoint(1.0f - Math.Abs(residue), 0.0f, 1.0f))) << 8; // green
-                        this.deltaFromReferenceFramePixelsArgb[index] |= ((byte)(255.0f * KinectFusionHelper.ClampFloatingPoint(1.0f + residue, 0.0f, 1.0f))) << 16; // red
-                    }
-                    else {
-                        this.deltaFromReferenceFramePixelsArgb[index] = 0;
-                    }
-                }
-            });
-            bitmap.WritePixels(
-                        new Int32Rect(0, 0, alignDeltasFloatFrame.Width, alignDeltasFloatFrame.Height),
-                        this.deltaFromReferenceFramePixelsArgb,
-                        bitmap.PixelWidth * sizeof(int),
-                        0);
-        }
 
 
         private void RenderDepthFloatImage(ref WriteableBitmap bitmap, System.Windows.Controls.Image image) {
@@ -997,7 +795,6 @@ namespace Display {
 
         private void OnVirtualCameraTransformationChanged(object sender, EventArgs e) {
             this.virtualCameraWorldToCameraMatrix4 = this.virtualCamera.WorldToCameraMatrix4;
-            this.viewChanged = true;
         }
 
         private void CheckResetTimeStamp(TimeSpan frameTimestamp) {
@@ -1067,16 +864,6 @@ namespace Display {
                 this.worldToBGRTransform.M41 = 0.5f;
                 this.worldToBGRTransform.M42 = 0.5f;
                 this.worldToBGRTransform.M44 = 1.0f;
-                if (this.volumeGraphics) {
-                    Dispatcher.BeginInvoke(
-                        (Action)(() => {
-                                this.RemoveVolumeCube3DGraphics();
-                                this.DisposeVolumeCube3DGraphics();
-                                this.CreateCube3DGraphics(volumeCubeLineColor, LineThickness, new Vector3D(0, 0, 0));
-                                this.AddVolumeCube3DGraphics();
-                            }));
-                }
-                this.viewChanged = true;
 
                 return true;
             }
@@ -1104,15 +891,10 @@ namespace Display {
                 Array.Clear(this.resampledColorImagePixelsAlignedToDepth, 0, this.resampledColorImagePixelsAlignedToDepth.Length);
                 this.resampledColorFrameDepthAligned.CopyPixelDataFrom(this.resampledColorImagePixelsAlignedToDepth);
             }
-
-            this.colorCaptured = false;
         }
 
-        private void UpdateVirtualCameraTransform() {
-            this.virtualCamera.WorldToCameraMatrix4 = this.worldToCameraTransform;
-        }
 
-        
+
         private void CreateCube3DGraphics(System.Windows.Media.Color color, int thickness, Vector3D translation) {
             float cubeSizeScaler = 1.0f;
             float oneOverVpm = 1.0f / this.voxelsPerMeter;
@@ -1245,7 +1027,7 @@ namespace Display {
         private void ShowStatusMessage(string message) {
             Console.WriteLine(message);
         }
-        
+
         private void AllocateKinectFusionResources() {
             this.SafeDisposeFusionResources();
             this.depthFloatFrame = new FusionFloatImageFrame(this.depthWidth, this.depthHeight);
@@ -1344,7 +1126,7 @@ namespace Display {
             }
         }
 
-        
+
         private unsafe void DownsampleDepthFrameNearestNeighbor(FusionFloatImageFrame dest, int factor) {
             if (null == dest || null == this.downsampledDepthImagePixels) {
                 throw new ArgumentException("inputs null");
@@ -1360,43 +1142,25 @@ namespace Display {
                 throw new ArgumentException("dest != downsampled image size");
             }
 
-            if (this.mirrorDepth) {
-                fixed (ushort* rawDepthPixelPtr = this.depthImagePixels) {
-                    ushort* rawDepthPixels = (ushort*)rawDepthPixelPtr;
-                    Parallel.For(
-                        0,
-                        downsampleHeight,
-                        y => {
-                            int destIndex = y * downsampleWidth;
-                            int sourceIndex = y * this.depthWidth * factor;
+            fixed (ushort* rawDepthPixelPtr = this.depthImagePixels) {
+                ushort* rawDepthPixels = (ushort*)rawDepthPixelPtr;
+                Parallel.For(
+                    0,
+                    downsampleHeight,
+                    y => {
+                        int flippedDestIndex = (y * downsampleWidth) + (downsampleWidth - 1);
+                        int sourceIndex = y * this.depthWidth * factor;
 
-                            for (int x = 0; x < downsampleWidth; ++x, ++destIndex, sourceIndex += factor) {
-                                this.downsampledDepthImagePixels[destIndex] = (float)rawDepthPixels[sourceIndex] * 0.001f;
-                            }
-                        });
-                }
-            }
-            else {
-                fixed (ushort* rawDepthPixelPtr = this.depthImagePixels) {
-                    ushort* rawDepthPixels = (ushort*)rawDepthPixelPtr;
-                    Parallel.For(
-                        0,
-                        downsampleHeight,
-                        y => {
-                            int flippedDestIndex = (y * downsampleWidth) + (downsampleWidth - 1);
-                            int sourceIndex = y * this.depthWidth * factor;
-
-                            for (int x = 0; x < downsampleWidth; ++x, --flippedDestIndex, sourceIndex += factor) {
-                                this.downsampledDepthImagePixels[flippedDestIndex] = (float)rawDepthPixels[sourceIndex] * 0.001f;
-                            }
-                        });
-                }
+                        for (int x = 0; x < downsampleWidth; ++x, --flippedDestIndex, sourceIndex += factor) {
+                            this.downsampledDepthImagePixels[flippedDestIndex] = (float)rawDepthPixels[sourceIndex] * 0.001f;
+                        }
+                    });
             }
 
             dest.CopyPixelDataFrom(this.downsampledDepthImagePixels);
         }
 
-        
+
         private unsafe void UpsampleColorDeltasFrameNearestNeighbor(int factor) {
             if (null == this.downsampledDeltaFromReferenceFrameColorFrame || null == this.downsampledDeltaFromReferenceColorPixels || null == this.deltaFromReferenceFramePixelsArgb) {
                 throw new ArgumentException("inputs null");
@@ -1441,15 +1205,5 @@ namespace Display {
                 }
             }
         }
-
-        private void ReconstructFrameComplete() {
-            RenderColorImage(
-                this.captureColor ? this.shadedSurfaceFrame : (this.displayNormals ? this.shadedSurfaceNormalsFrame : this.shadedSurfaceFrame),
-                ref this.shadedSurfaceFramePixelsArgb,
-                ref this.shadedSurfaceFrameBitmap,
-                this.reconstructionImage);
-        }
-
-        
     }
 }
